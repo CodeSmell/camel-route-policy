@@ -86,7 +86,7 @@ public class ThrottingExceptionRoutePolicyHalfOpenHandlerSedaTest extends CamelT
                 long failureWindow = 30;
                 long halfOpenAfter = 5000;
                 ThrottlingExceptionRoutePolicy policy = new ThrottlingExceptionRoutePolicy(threshold, failureWindow, halfOpenAfter, null);
-                policy.setHalfOpenHandler(new AlwaysReopenHandler());
+                policy.setHalfOpenHandler(new AlwaysCloseHandler());
                 
                 from(url)
                     .routePolicy(policy)
@@ -97,7 +97,7 @@ public class ThrottingExceptionRoutePolicyHalfOpenHandlerSedaTest extends CamelT
         };
     }
     
-    public class AlwaysReopenHandler implements ThrottingExceptionHalfOpenHandler {
+    public class AlwaysCloseHandler implements ThrottingExceptionHalfOpenHandler {
 
         @Override
         public boolean isReadyToBeClosed() {

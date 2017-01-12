@@ -87,7 +87,7 @@ public class ThrottlingExceptionRoutePolicyTest extends CamelTestSupport {
                 long failureWindow = 30;
                 long halfOpenAfter = 5000;
                 ThrottlingExceptionRoutePolicy policy = new ThrottlingExceptionRoutePolicy(threshold, failureWindow, halfOpenAfter, null);
-                policy.setHalfOpenHandler(new NeverReopenHandler());
+                policy.setHalfOpenHandler(new NeverCloseHandler());
                 
                 from(url)
                     .routePolicy(policy)
@@ -98,7 +98,7 @@ public class ThrottlingExceptionRoutePolicyTest extends CamelTestSupport {
         };
     }
     
-    public class NeverReopenHandler implements ThrottingExceptionHalfOpenHandler {
+    public class NeverCloseHandler implements ThrottingExceptionHalfOpenHandler {
 
         @Override
         public boolean isReadyToBeClosed() {
