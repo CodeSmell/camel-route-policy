@@ -24,8 +24,15 @@ import java.util.concurrent.locks.ReentrantLock;
  * thrown and the threshold setting. 
  * 
  * the scenario: if a route cannot process data from an endpoint due to problems with resources used by the route
- * (ie database down) then it will stop consuming new messages from an endpoint 
- * in a way comparable to the Circuit Breaker pattern
+ * (ie database down) then it will stop consuming new messages from the endpoint by stopping the consumer. 
+ * The implementation is comparable to the Circuit Breaker pattern. After a set amount of time, it will move 
+ * to a half open state and attempt to determine if the consumer can be started.
+ * There are two ways to determine if a route can be closed after being opened
+ * (1) start the consumer and check the failure threshold
+ * (2) call the {@link ThrottlingExceptionHalfOpenHandler} 
+ * The second option allows a custom check to be performed without having to take on the possibiliy of 
+ * multiple messages from the endpoint. The idea is that a handler could run a simple test (ie select 1 from dual)
+ * to determine if the processes that cause the route to be open are now available  
  */
 public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implements CamelContextAware {
     private static Logger log = LoggerFactory.getLogger(ThrottlingExceptionRoutePolicy.class);
