@@ -159,16 +159,18 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
                 log.debug("checking an open circuit...");
                 if (halfOpenHandler != null) {
                     if (halfOpenHandler.isReadyToBeClosed()) {
-                        log.debug("closing circuit...");
+                        log.debug("Closing circuit...");
                         closeCircuit(route);
                     } else {
-                        log.debug("opening circuit...");
+                        log.debug("Opening circuit...");
                         openCircuit(route);
                     }
                 } else {
-                    log.debug("half opening circuit...");
+                    log.debug("Half opening circuit...");
                     halfOpenCircuit(route);
                 }
+            } else {
+                // keep it open: time has not elapsed yet
             }
         }
 
