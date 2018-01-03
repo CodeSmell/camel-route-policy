@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -58,6 +59,7 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     // stateful information
     private AtomicInteger failures = new AtomicInteger();
     private AtomicInteger state = new AtomicInteger(STATE_CLOSED);
+    private AtomicBoolean keepOpen = new AtomicBoolean(false);
     private volatile Timer halfOpenTimer;
     private volatile long lastFailure;
     private volatile long openedAt;
@@ -83,6 +85,13 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     public void onInit(Route route) {
         log.debug("initializing ThrottlingExceptionRoutePolicy route policy...");
         logState();
+    }
+
+    @Override
+    public void onStart(Route route) {
+        if (keepOpen.get()) {
+            openCircuit(route);
+        }
     }
 
     @Override
@@ -154,16 +163,24 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
                 closeCircuit(route);
             }
         } else if (state.get() == STATE_OPEN) {
-            long elapsedTimeSinceOpened = System.currentTimeMillis() - openedAt;
-            if (halfOpenAfter <= elapsedTimeSinceOpened) {
-                log.debug("checking an open circuit...");
-                if (halfOpenHandler != null) {
-                    if (halfOpenHandler.isReadyToBeClosed()) {
-                        log.debug("closing circuit...");
-                        closeCircuit(route);
+            if (keepOpen.get()) {
+                log.debug("keeping circuit open...");
+                openCircuit(route);
+            } else {
+                long elapsedTimeSinceOpened = System.currentTimeMillis() - openedAt;
+                if (halfOpenAfter <= elapsedTimeSinceOpened) {
+                    log.debug("checking an open circuit...");
+                    if (halfOpenHandler != null) {
+                        if (halfOpenHandler.isReadyToBeClosed()) {
+                            log.debug("closing circuit...");
+                            closeCircuit(route);
+                        } else {
+                            log.debug("opening circuit...");
+                            openCircuit(route);
+                        }
                     } else {
-                        log.debug("opening circuit...");
-                        openCircuit(route);
+                        log.debug("half opening circuit...");
+                        halfOpenCircuit(route);
                     }
                 } else {
                     log.debug("half opening circuit...");
@@ -272,8 +289,8 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
 
         @Override
         public void run() {
-            calculateState(route);
             halfOpenTimer.cancel();
+            calculateState(route);
         }
     }
 
@@ -283,6 +300,15 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
 
     public void setHalfOpenHandler(ThrottingExceptionHalfOpenHandler halfOpenHandler) {
         this.halfOpenHandler = halfOpenHandler;
+    }
+
+    public boolean getKeepOpen() {
+        return this.keepOpen.get();
+    }
+
+    public void setKeepOpen(boolean keepOpen) {
+        log.debug("keep open:" + keepOpen);
+        this.keepOpen.set(keepOpen);
     }
 
 }
