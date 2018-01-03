@@ -21,54 +21,54 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * modeled after the {@link CircuitBreakerLoadBalancer} and {@link ThrottlingInflightRoutePolicy}
  * this {@link RoutePolicy} will stop consuming from an endpoint based on the type of exceptions that are
- * thrown and the threshold setting. 
- * 
+ * thrown and the threshold setting.
+ *
  * the scenario: if a route cannot process data from an endpoint due to problems with resources used by the route
- * (ie database down) then it will stop consuming new messages from the endpoint by stopping the consumer. 
- * The implementation is comparable to the Circuit Breaker pattern. After a set amount of time, it will move 
+ * (ie database down) then it will stop consuming new messages from the endpoint by stopping the consumer.
+ * The implementation is comparable to the Circuit Breaker pattern. After a set amount of time, it will move
  * to a half open state and attempt to determine if the consumer can be started.
  * There are two ways to determine if a route can be closed after being opened
  * (1) start the consumer and check the failure threshold
- * (2) call the {@link ThrottlingExceptionHalfOpenHandler} 
- * The second option allows a custom check to be performed without having to take on the possibiliy of 
+ * (2) call the {@link ThrottlingExceptionHalfOpenHandler}
+ * The second option allows a custom check to be performed without having to take on the possibiliy of
  * multiple messages from the endpoint. The idea is that a handler could run a simple test (ie select 1 from dual)
- * to determine if the processes that cause the route to be open are now available  
+ * to determine if the processes that cause the route to be open are now available
  */
 public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implements CamelContextAware {
     private static Logger log = LoggerFactory.getLogger(ThrottlingExceptionRoutePolicy.class);
-    
+
     private static final int STATE_CLOSED = 0;
     private static final int STATE_HALF_OPEN = 1;
     private static final int STATE_OPEN = 2;
-    
+
     private CamelContext camelContext;
     private final Lock lock = new ReentrantLock();
-    
+
     // configuration
     private int failureThreshold;
     private long failureWindow;
     private long halfOpenAfter;
     private final List<Class<?>> throttledExceptions;
-    
+
     // handler for half open circuit
     // can be used instead of resuming route
     // to check on resources
     ThrottingExceptionHalfOpenHandler halfOpenHandler;
 
     // stateful information
-    private Timer halfOpenTimer;
     private AtomicInteger failures = new AtomicInteger();
     private AtomicInteger state = new AtomicInteger(STATE_CLOSED);
-    private long lastFailure;
-    private long openedAt;
-    
+    private volatile Timer halfOpenTimer;
+    private volatile long lastFailure;
+    private volatile long openedAt;
+
     public ThrottlingExceptionRoutePolicy(int threshold, long failureWindow, long halfOpenAfter, List<Class<?>> handledExceptions) {
         this.throttledExceptions = handledExceptions;
         this.failureWindow = failureWindow;
         this.halfOpenAfter = halfOpenAfter;
         this.failureThreshold = threshold;
     }
-    
+
     @Override
     public void setCamelContext(CamelContext camelContext) {
         this.camelContext = camelContext;
@@ -84,22 +84,22 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
         log.debug("initializing ThrottlingExceptionRoutePolicy route policy...");
         logState();
     }
-    
+
     @Override
     public void onExchangeDone(Route route, Exchange exchange) {
         if (hasFailed(exchange)) {
             // record the failure
             failures.incrementAndGet();
             lastFailure = System.currentTimeMillis();
-        } 
-        
+        }
+
         // check for state change
         calculateState(route);
     }
-    
+
     /**
      * uses similar approach as {@link CircuitBreakerLoadBalancer}
-     * if the exchange has an exception that we are watching 
+     * if the exchange has an exception that we are watching
      * then we count that as a failure otherwise we ignore it
      * @param exchange
      * @return
@@ -114,7 +114,7 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
         if (exchange.getException() != null) {
             log.debug("exception occured on route: checking to see if I handle that");
             if (throttledExceptions == null || throttledExceptions.isEmpty()) {
-                // if no exceptions defined then always fail 
+                // if no exceptions defined then always fail
                 // (ie) assume we throttle on all exceptions
                 answer = true;
             } else {
@@ -136,10 +136,10 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     }
 
     private void calculateState(Route route) {
-        
+
         // have we reached the failure limit?
         boolean failureLimitReached = isThresholdExceeded();
-        
+
         if (state.get() == STATE_CLOSED) {
             if (failureLimitReached) {
                 log.debug("opening circuit...");
@@ -167,25 +167,25 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
                     }
                 } else {
                     log.debug("half opening circuit...");
-                    halfOpenCircuit(route);                    
+                    halfOpenCircuit(route);
                 }
-            } 
+            }
         }
-        
+
     }
-    
+
     protected boolean isThresholdExceeded() {
         boolean output = false;
         logState();
-        // failures exceed the threshold 
+        // failures exceed the threshold
         // AND the last of those failures occurred within window
         if ((failures.get() >= failureThreshold) && (lastFailure >= System.currentTimeMillis() - failureWindow)) {
             output = true;
         }
-        
+
         return output;
     }
-        
+
     protected void openCircuit(Route route) {
         try {
             lock.lock();
@@ -214,7 +214,7 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             lock.unlock();
         }
     }
-    
+
     protected void closeCircuit(Route route) {
         try {
             lock.lock();
@@ -227,9 +227,9 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             lock.unlock();
         }
     }
-    
+
     /**
-     * reset the route 
+     * reset the route
      */
     private void reset() {
         failures.set(0);
@@ -237,13 +237,13 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
         openedAt = 0;
         state.set(STATE_CLOSED);
     }
-    
+
     private void logState() {
         if (log.isDebugEnabled()) {
             log.debug(dumpState());
         }
     }
-    
+
     public String dumpState() {
         int num = state.get();
         String state = stateAsString(num);
@@ -253,7 +253,7 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             return String.format("*** State %s, failures %d", state, failures.get());
         }
     }
-    
+
     private static String stateAsString(int num) {
         if (num == STATE_CLOSED) {
             return "closed";
@@ -263,20 +263,20 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             return "opened";
         }
     }
-    
+
     class HalfOpenTask extends TimerTask {
         private final Route route;
         public HalfOpenTask(Route route) {
             this.route = route;
         }
-        
+
         @Override
         public void run() {
             calculateState(route);
             halfOpenTimer.cancel();
         }
     }
-    
+
     public ThrottingExceptionHalfOpenHandler getHalfOpenHandler() {
         return halfOpenHandler;
     }
