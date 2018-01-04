@@ -45,7 +45,6 @@ public class ThrottlingExceptionRoutePolicyKeepOpenOnInitTest extends CamelTestS
 
     @Test
     public void testThrottlingRoutePolicyStartWithAlwaysOpenOnThenClose() throws Exception {
-//        result.expectedMessageCount(size);
 
         for (int i = 0; i < size; i++) {
             template.sendBody(url, "Message " + i);
