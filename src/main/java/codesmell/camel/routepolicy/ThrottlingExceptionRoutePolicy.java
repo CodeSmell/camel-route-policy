@@ -69,6 +69,15 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
         this.failureWindow = failureWindow;
         this.halfOpenAfter = halfOpenAfter;
         this.failureThreshold = threshold;
+        this.keepOpen.set(false);
+    }
+
+    public ThrottlingExceptionRoutePolicy(int threshold, long failureWindow, long halfOpenAfter, List<Class<?>> handledExceptions, boolean keepOpen) {
+        this.throttledExceptions = handledExceptions;
+        this.failureWindow = failureWindow;
+        this.halfOpenAfter = halfOpenAfter;
+        this.failureThreshold = threshold;
+        this.keepOpen.set(keepOpen);
     }
 
     @Override
@@ -85,25 +94,28 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     public void onInit(Route route) {
         log.debug("initializing ThrottlingExceptionRoutePolicy route policy...");
         logState();
-    }
-
-    @Override
-    public void onStart(Route route) {
+        // if keepOpen then start w/ the circuit open
         if (keepOpen.get()) {
             openCircuit(route);
         }
+        log.debug("end of onInit");
     }
 
     @Override
     public void onExchangeDone(Route route, Exchange exchange) {
-        if (hasFailed(exchange)) {
-            // record the failure
-            failures.incrementAndGet();
-            lastFailure = System.currentTimeMillis();
-        }
+        if (keepOpen.get()) {
+            //todo: too many timers
+            //openCircuit(route);
+        } else {
+            if (hasFailed(exchange)) {
+                // record the failure
+                failures.incrementAndGet();
+                lastFailure = System.currentTimeMillis();
+            }
 
-        // check for state change
-        calculateState(route);
+            // check for state change
+            calculateState(route);
+        }
     }
 
     /**
@@ -169,22 +181,21 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             } else {
                 long elapsedTimeSinceOpened = System.currentTimeMillis() - openedAt;
                 if (halfOpenAfter <= elapsedTimeSinceOpened) {
-                    log.debug("checking an open circuit...");
+                    log.debug("Checking an open circuit...");
                     if (halfOpenHandler != null) {
                         if (halfOpenHandler.isReadyToBeClosed()) {
-                            log.debug("closing circuit...");
+                            log.debug("Closing circuit...");
                             closeCircuit(route);
                         } else {
-                            log.debug("opening circuit...");
+                            log.debug("Opening circuit...");
                             openCircuit(route);
                         }
                     } else {
-                        log.debug("half opening circuit...");
+                        log.debug("Half opening circuit...");
                         halfOpenCircuit(route);
                     }
                 } else {
-                    log.debug("half opening circuit...");
-                    halfOpenCircuit(route);
+                    // keep it open: time has not elapsed yet
                 }
             }
         }
