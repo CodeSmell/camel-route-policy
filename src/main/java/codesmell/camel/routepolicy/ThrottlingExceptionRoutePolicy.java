@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -58,6 +59,7 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     // stateful information
     private AtomicInteger failures = new AtomicInteger();
     private AtomicInteger state = new AtomicInteger(STATE_CLOSED);
+    private AtomicBoolean keepOpen = new AtomicBoolean(false);
     private volatile Timer halfOpenTimer;
     private volatile long lastFailure;
     private volatile long openedAt;
@@ -67,6 +69,15 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
         this.failureWindow = failureWindow;
         this.halfOpenAfter = halfOpenAfter;
         this.failureThreshold = threshold;
+        this.keepOpen.set(false);
+    }
+
+    public ThrottlingExceptionRoutePolicy(int threshold, long failureWindow, long halfOpenAfter, List<Class<?>> handledExceptions, boolean keepOpen) {
+        this.throttledExceptions = handledExceptions;
+        this.failureWindow = failureWindow;
+        this.halfOpenAfter = halfOpenAfter;
+        this.failureThreshold = threshold;
+        this.keepOpen.set(keepOpen);
     }
 
     @Override
@@ -86,15 +97,30 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     }
 
     @Override
-    public void onExchangeDone(Route route, Exchange exchange) {
-        if (hasFailed(exchange)) {
-            // record the failure
-            failures.incrementAndGet();
-            lastFailure = System.currentTimeMillis();
+    public void onStart(Route route) {
+        // if keepOpen then start w/ the circuit open
+        if (keepOpen.get()) {
+            openCircuit(route);
         }
+    }
 
-        // check for state change
-        calculateState(route);
+    @Override
+    public void onExchangeDone(Route route, Exchange exchange) {
+        if (keepOpen.get()) {
+            if (state.get() != STATE_OPEN) {
+                log.debug("opening circuit b/c keepOpen is on");
+                openCircuit(route);
+            }
+        } else {
+            if (hasFailed(exchange)) {
+                // record the failure
+                failures.incrementAndGet();
+                lastFailure = System.currentTimeMillis();
+            }
+
+            // check for state change
+            calculateState(route);
+        }
     }
 
     /**
@@ -154,23 +180,28 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
                 closeCircuit(route);
             }
         } else if (state.get() == STATE_OPEN) {
-            long elapsedTimeSinceOpened = System.currentTimeMillis() - openedAt;
-            if (halfOpenAfter <= elapsedTimeSinceOpened) {
-                log.debug("checking an open circuit...");
-                if (halfOpenHandler != null) {
-                    if (halfOpenHandler.isReadyToBeClosed()) {
-                        log.debug("Closing circuit...");
-                        closeCircuit(route);
+            if (!keepOpen.get()) {
+                long elapsedTimeSinceOpened = System.currentTimeMillis() - openedAt;
+                if (halfOpenAfter <= elapsedTimeSinceOpened) {
+                    log.debug("Checking an open circuit...");
+                    if (halfOpenHandler != null) {
+                        if (halfOpenHandler.isReadyToBeClosed()) {
+                            log.debug("Closing circuit...");
+                            closeCircuit(route);
+                        } else {
+                            log.debug("Opening circuit...");
+                            openCircuit(route);
+                        }
                     } else {
-                        log.debug("Opening circuit...");
-                        openCircuit(route);
+                        log.debug("Half opening circuit...");
+                        halfOpenCircuit(route);
                     }
                 } else {
-                    log.debug("Half opening circuit...");
-                    halfOpenCircuit(route);
+                    log.debug("keeping circuit open (time not elapsed)...");
                 }
             } else {
-                // keep it open: time has not elapsed yet
+                log.debug("keeping circuit open (keepOpen is true)...");
+                this.addHalfOpenTimer(route);
             }
         }
 
@@ -194,14 +225,18 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             stopConsumer(route.getConsumer());
             state.set(STATE_OPEN);
             openedAt = System.currentTimeMillis();
-            halfOpenTimer = new Timer();
-            halfOpenTimer.schedule(new HalfOpenTask(route), halfOpenAfter);
+            this.addHalfOpenTimer(route);
             logState();
         } catch (Exception e) {
             handleException(e);
         } finally {
             lock.unlock();
         }
+    }
+
+    protected void addHalfOpenTimer(Route route) {
+        halfOpenTimer = new Timer();
+        halfOpenTimer.schedule(new HalfOpenTask(route), halfOpenAfter);
     }
 
     protected void halfOpenCircuit(Route route) {
@@ -274,8 +309,8 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
 
         @Override
         public void run() {
-            calculateState(route);
             halfOpenTimer.cancel();
+            calculateState(route);
         }
     }
 
@@ -285,6 +320,15 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
 
     public void setHalfOpenHandler(ThrottingExceptionHalfOpenHandler halfOpenHandler) {
         this.halfOpenHandler = halfOpenHandler;
+    }
+
+    public boolean getKeepOpen() {
+        return this.keepOpen.get();
+    }
+
+    public void setKeepOpen(boolean keepOpen) {
+        log.debug("keep open:" + keepOpen);
+        this.keepOpen.set(keepOpen);
     }
 
 }
