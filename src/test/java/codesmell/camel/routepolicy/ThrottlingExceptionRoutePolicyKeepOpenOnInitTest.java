@@ -19,16 +19,26 @@ public class ThrottlingExceptionRoutePolicyKeepOpenOnInitTest extends CamelTestS
     @Override
     @Before
     public void setUp() throws Exception {
+        this.createPolicy();
+
         super.setUp();
         this.setUseRouteBuilder(true);
         result = getMockEndpoint("mock:result");
         context.getShutdownStrategy().setTimeout(1);
     }
 
+    protected void createPolicy() {
+        int threshold = 2;
+        long failureWindow = 30;
+        long halfOpenAfter = 1000;
+        boolean keepOpen = true;
+        policy = new ThrottlingExceptionRoutePolicy(threshold, failureWindow, halfOpenAfter, null, keepOpen);
+    }
+
     @Test
     public void testThrottlingRoutePolicyStartWithAlwaysOpenOn() throws Exception {
-        result.expectedMessageCount(0);
 
+        log.debug("---- sending some messages");
         for (int i = 0; i < size; i++) {
             template.sendBody(url, "Message " + i);
             Thread.sleep(3);
@@ -40,6 +50,7 @@ public class ThrottlingExceptionRoutePolicyKeepOpenOnInitTest extends CamelTestS
 
         // gives time for policy half open check to run every second
         // but it should never close b/c keepOpen is true
+        result.expectedMessageCount(0);
         assertMockEndpointsSatisfied(1000, TimeUnit.MILLISECONDS);
     }
 
@@ -73,12 +84,6 @@ public class ThrottlingExceptionRoutePolicyKeepOpenOnInitTest extends CamelTestS
         return new RouteBuilder() {
             @Override
             public void configure() throws Exception {
-                int threshold = 2;
-                long failureWindow = 30;
-                long halfOpenAfter = 1000;
-                boolean keepOpen = true;
-                policy = new ThrottlingExceptionRoutePolicy(threshold, failureWindow, halfOpenAfter, null, keepOpen);
-
                 from(url)
                     .routePolicy(policy)
                     .log("${body}")

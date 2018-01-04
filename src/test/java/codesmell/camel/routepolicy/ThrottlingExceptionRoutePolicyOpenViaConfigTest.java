@@ -22,50 +22,64 @@ public class ThrottlingExceptionRoutePolicyOpenViaConfigTest extends CamelTestSu
     @Override
     @Before
     public void setUp() throws Exception {
+        this.createPolicy();
+
         super.setUp();
         this.setUseRouteBuilder(true);
         result = getMockEndpoint("mock:result");
-
         context.getShutdownStrategy().setTimeout(1);
-
-        // start off policy w/ open circuit
-        policy.setKeepOpen(false);
     }
 
+    protected void createPolicy() {
+        int threshold = 2;
+        long failureWindow = 30;
+        long halfOpenAfter = 1000;
+        boolean keepOpen = false;
+        policy = new ThrottlingExceptionRoutePolicy(threshold, failureWindow, halfOpenAfter, null, keepOpen);
+    }
 
     @Test
-    public void testThrottlingRoutePolicyAlwaysOpen() throws Exception {
-        result.expectedMinimumMessageCount(0);
+    public void testThrottlingRoutePolicyStartWithAlwaysOpenOffThenToggle() throws Exception {
 
+        // send first set of messages
+        // should go through b/c circuit is closed
         for (int i = 0; i < size; i++) {
-            template.sendBody(url, "Message " + i);
+            template.sendBody(url, "MessageRound1 " + i);
             Thread.sleep(3);
         }
+        result.expectedMessageCount(size);
+        assertMockEndpointsSatisfied(2000, TimeUnit.MILLISECONDS);
 
-        // gives time for policy half open check to run every second
-        // but it should never close b/c keepOpen is true
-        assertMockEndpointsSatisfied(5000, TimeUnit.MILLISECONDS);
-    }
+        // set keepOpen to true
+        policy.setKeepOpen(true);
 
-    @Test
-    public void testThrottlingRoutePolicyAlwaysOpenClosed() throws Exception {
-        result.expectedMinimumMessageCount(size);
+        // trigger opening circuit
+        // by sending another message
+        template.sendBody(url, "MessageTrigger");
 
+        // give time for circuit to open
+        Thread.sleep(1000);
+
+        // send next set of messages
+        // should NOT go through b/c circuit is open
         for (int i = 0; i < size; i++) {
-            template.sendBody(url, "Message " + i);
+            template.sendBody(url, "MessageRound2 " + i);
             Thread.sleep(3);
         }
 
         // gives time for policy half open check to run every second
         // and should not close b/c keepOpen is true
-        Thread.sleep(3000);
+        Thread.sleep(2000);
+
+        result.expectedMessageCount(size + 1);
+        assertMockEndpointsSatisfied(2000, TimeUnit.MILLISECONDS);
 
         // set keepOpen to false
-        // now half open check will succeed
         policy.setKeepOpen(false);
 
         // gives time for policy half open check to run every second
-        // and should close and get all the messages
+        // and it should close b/c keepOpen is false
+        result.expectedMessageCount(size * 2 + 1);
         assertMockEndpointsSatisfied(2000, TimeUnit.MILLISECONDS);
     }
 

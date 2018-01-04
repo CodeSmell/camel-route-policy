@@ -94,18 +94,23 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
     public void onInit(Route route) {
         log.debug("initializing ThrottlingExceptionRoutePolicy route policy...");
         logState();
+    }
+
+    @Override
+    public void onStart(Route route) {
         // if keepOpen then start w/ the circuit open
         if (keepOpen.get()) {
             openCircuit(route);
         }
-        log.debug("end of onInit");
     }
 
     @Override
     public void onExchangeDone(Route route, Exchange exchange) {
         if (keepOpen.get()) {
-            //todo: too many timers
-            //openCircuit(route);
+            if (state.get() != STATE_OPEN) {
+                log.debug("opening circuit b/c keepOpen is on");
+                openCircuit(route);
+            }
         } else {
             if (hasFailed(exchange)) {
                 // record the failure
@@ -175,10 +180,7 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
                 closeCircuit(route);
             }
         } else if (state.get() == STATE_OPEN) {
-            if (keepOpen.get()) {
-                log.debug("keeping circuit open...");
-                openCircuit(route);
-            } else {
+            if (!keepOpen.get()) {
                 long elapsedTimeSinceOpened = System.currentTimeMillis() - openedAt;
                 if (halfOpenAfter <= elapsedTimeSinceOpened) {
                     log.debug("Checking an open circuit...");
@@ -195,8 +197,11 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
                         halfOpenCircuit(route);
                     }
                 } else {
-                    // keep it open: time has not elapsed yet
+                    log.debug("keeping circuit open (time not elapsed)...");
                 }
+            } else {
+                log.debug("keeping circuit open (keepOpen is true)...");
+                this.addHalfOpenTimer(route);
             }
         }
 
@@ -220,14 +225,18 @@ public class ThrottlingExceptionRoutePolicy extends RoutePolicySupport implement
             stopConsumer(route.getConsumer());
             state.set(STATE_OPEN);
             openedAt = System.currentTimeMillis();
-            halfOpenTimer = new Timer();
-            halfOpenTimer.schedule(new HalfOpenTask(route), halfOpenAfter);
+            this.addHalfOpenTimer(route);
             logState();
         } catch (Exception e) {
             handleException(e);
         } finally {
             lock.unlock();
         }
+    }
+
+    protected void addHalfOpenTimer(Route route) {
+        halfOpenTimer = new Timer();
+        halfOpenTimer.schedule(new HalfOpenTask(route), halfOpenAfter);
     }
 
     protected void halfOpenCircuit(Route route) {
